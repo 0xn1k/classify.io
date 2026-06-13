@@ -13,17 +13,16 @@
 
 ## 2. Database Architecture Principles
 
-- Use PostgreSQL as the source of truth for all SchoolOS business data.
+- Keep the MVP schema small and easy to implement.
+- Use PostgreSQL as the source of truth for SchoolOS business data.
 - Use Supabase Auth for login identity and store the linked application profile in `users`.
 - Use UUID primary keys for core entities.
-- Use foreign keys for all domain relationships.
-- Use enum values for controlled statuses and types.
-- Use `Decimal` for fee and payment amounts.
-- Keep historical records instead of hard deleting operational data.
-- Use `created_at` and `updated_at` on all mutable tables.
-- Use `created_by` and `updated_by` where auditability is useful.
-- Use audit logs for sensitive changes.
-- Design the MVP for one school, but include `school_id` in most business tables to make future multi-school support easier.
+- Use enums for stable statuses, roles, and payment methods.
+- Use `Decimal` for fee, payment, and marks values.
+- Use `Json` columns for low-risk MVP configuration where a separate table would add more complexity than value.
+- Keep historical operational records instead of hard deleting important data.
+- Use `created_at` and `updated_at` on mutable tables.
+- Design the MVP for one school, but keep `school_id` on business tables so future multi-school support is possible.
 
 ## 3. Common Column Conventions
 
@@ -51,6 +50,7 @@ updatedAt DateTime @updatedAt @map("updated_at")
 Recommended enums:
 
 ```text
+UserRole: PRINCIPAL, TEACHER, ACCOUNTANT, RECEPTIONIST
 UserStatus: ACTIVE, INACTIVE
 StudentStatus: ACTIVE, INACTIVE, LEFT, GRADUATED
 TeacherStatus: ACTIVE, INACTIVE
@@ -62,18 +62,40 @@ FeeLedgerStatus: DUE, PARTIAL, PAID, WAIVED, CANCELLED
 PaymentMethod: CASH, UPI, BANK_TRANSFER
 NotificationAudienceType: ALL_PARENTS, CLASS_WISE, SECTION_WISE, FEE_DEFAULTERS, TEACHERS
 NotificationCategory: GENERAL_NOTICE, FEE_REMINDER, EXAM_NOTIFICATION
-NotificationStatus: QUEUED, SENT, DELIVERED, FAILED
+NotificationStatus: DRAFT, QUEUED, SENT, DELIVERED, PARTIAL_FAILED, FAILED
 ExamType: UNIT_TEST, QUARTERLY, HALF_YEARLY, ANNUAL
 ExamStatus: DRAFT, SCHEDULED, COMPLETED, RESULT_PUBLISHED
-ResultStatus: GENERATED, PUBLISHED
-AuditAction: CREATE, UPDATE, DELETE, STATUS_CHANGE, APPROVE, REJECT, LOGIN, LOGOUT, PAYMENT_COLLECTED, RESULT_GENERATED, RESULT_PUBLISHED, PERMISSION_CHANGED
+AuditAction: CREATE, UPDATE, DELETE, STATUS_CHANGE, APPROVE, REJECT, LOGIN, LOGOUT, PAYMENT_COLLECTED, RESULT_PUBLISHED
 ```
 
-## 5. Tables
+## 5. Simplified MVP Tables
+
+The MVP uses 18 tables instead of the earlier 32-table normalized design. The goal is to reduce joins, migrations, seed data, and admin screens while keeping the core workflows usable.
+
+| # | Table | Purpose |
+| --- | --- | --- |
+| 1 | `schools` | School profile and app-level settings. |
+| 2 | `users` | Login-linked app users with one MVP role. |
+| 3 | `academic_years` | Academic year setup. |
+| 4 | `classes` | Class and section setup in one table. |
+| 5 | `subjects` | Subject master data. |
+| 6 | `students` | Student profile, parent details, placement, and fee plan link. |
+| 7 | `teachers` | Teacher profile and optional login link. |
+| 8 | `teacher_assignments` | Teacher to class, section, and subject assignment. |
+| 9 | `student_attendance` | Daily student attendance. |
+| 10 | `teacher_attendance` | Daily teacher attendance. |
+| 11 | `leave_requests` | Teacher leave request and review workflow. |
+| 12 | `fee_plans` | Fee category and amount configuration. |
+| 13 | `fee_ledgers` | Student dues, paid amount, balance, and status. |
+| 14 | `payments` | Payment and receipt details in one record. |
+| 15 | `exams` | Exam setup and subject mark configuration. |
+| 16 | `marks` | Student marks by exam and subject. |
+| 17 | `notifications` | Message campaign, recipients, templates, and provider result summary. |
+| 18 | `audit_logs` | Append-only records for sensitive actions. |
 
 ## 5.1 `schools`
 
-Purpose: Stores school identity and contact information. MVP has one school, but this table keeps the architecture ready for future multi-school support.
+Purpose: Stores school identity, contact information, and simple app settings.
 
 | Column | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -83,6 +105,7 @@ Purpose: Stores school identity and contact information. MVP has one school, but
 | `address` | Text | No | School address. |
 | `phone` | Text | No | School phone number. |
 | `email` | Text | No | School email. |
+| `communication_config` | Json | No | Non-secret WhatsApp/provider settings and reusable message templates. |
 | `created_at` | Timestamp | Yes | Created timestamp. |
 | `updated_at` | Timestamp | Yes | Updated timestamp. |
 
@@ -90,9 +113,13 @@ Indexes and constraints:
 
 - Primary key on `id`.
 
+Security note:
+
+- Do not store raw API secrets in `communication_config`. Use environment variables or a managed secret store.
+
 ## 5.2 `users`
 
-Purpose: Stores application users linked to Supabase Auth identities.
+Purpose: Stores application users linked to Supabase Auth identities. MVP uses one role per user instead of separate role and permission tables.
 
 | Column | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -102,6 +129,7 @@ Purpose: Stores application users linked to Supabase Auth identities.
 | `name` | Text | Yes | User display name. |
 | `email` | Text | Yes | User email. |
 | `phone` | Text | No | User phone number. |
+| `role` | UserRole | Yes | Principal, Teacher, Accountant, or Receptionist. |
 | `status` | UserStatus | Yes | User account status. |
 | `created_at` | Timestamp | Yes | Created timestamp. |
 | `updated_at` | Timestamp | Yes | Updated timestamp. |
@@ -110,71 +138,9 @@ Indexes and constraints:
 
 - Unique index on `supabase_user_id`.
 - Unique index on `email`.
-- Index on `school_id`.
-- Index on `status`.
+- Index on `school_id`, `role`, and `status`.
 
-## 5.3 `roles`
-
-Purpose: Defines application roles such as Principal, Teacher, Accountant, and Receptionist.
-
-| Column | Type | Required | Description |
-| --- | --- | --- | --- |
-| `id` | UUID | Yes | Primary key. |
-| `school_id` | UUID nullable | No | Null for system default roles, set for school-specific roles. |
-| `name` | Text | Yes | Role name. |
-| `description` | Text | No | Role description. |
-| `is_system` | Boolean | Yes | Whether role is a default system role. |
-| `created_at` | Timestamp | Yes | Created timestamp. |
-| `updated_at` | Timestamp | Yes | Updated timestamp. |
-
-Indexes and constraints:
-
-- Unique index on `school_id` and `name`.
-
-## 5.4 `permissions`
-
-Purpose: Stores permission keys used for API and UI authorization.
-
-| Column | Type | Required | Description |
-| --- | --- | --- | --- |
-| `id` | UUID | Yes | Primary key. |
-| `key` | Text | Yes | Permission key, for example `MANAGE_STUDENTS`. |
-| `description` | Text | No | Human-readable description. |
-| `created_at` | Timestamp | Yes | Created timestamp. |
-
-Indexes and constraints:
-
-- Unique index on `key`.
-
-## 5.5 `role_permissions`
-
-Purpose: Join table between roles and permissions.
-
-| Column | Type | Required | Description |
-| --- | --- | --- | --- |
-| `role_id` | UUID | Yes | References `roles.id`. |
-| `permission_id` | UUID | Yes | References `permissions.id`. |
-| `created_at` | Timestamp | Yes | Created timestamp. |
-
-Indexes and constraints:
-
-- Composite primary key on `role_id` and `permission_id`.
-
-## 5.6 `user_roles`
-
-Purpose: Join table between users and roles.
-
-| Column | Type | Required | Description |
-| --- | --- | --- | --- |
-| `user_id` | UUID | Yes | References `users.id`. |
-| `role_id` | UUID | Yes | References `roles.id`. |
-| `created_at` | Timestamp | Yes | Created timestamp. |
-
-Indexes and constraints:
-
-- Composite primary key on `user_id` and `role_id`.
-
-## 5.7 `academic_years`
+## 5.3 `academic_years`
 
 Purpose: Stores configured academic years.
 
@@ -194,42 +160,25 @@ Indexes and constraints:
 - Unique index on `school_id` and `name`.
 - Index on `school_id` and `is_active`.
 
-## 5.8 `classes`
+## 5.4 `classes`
 
-Purpose: Stores school classes such as Class 1, Class 8, or Class 10.
+Purpose: Stores class and section combinations in one table, such as Class 8 - A.
 
 | Column | Type | Required | Description |
 | --- | --- | --- | --- |
 | `id` | UUID | Yes | Primary key. |
 | `school_id` | UUID | Yes | References `schools.id`. |
-| `name` | Text | Yes | Class name. |
+| `name` | Text | Yes | Class name, for example `Class 8`. |
+| `section` | Text | Yes | Section name, for example `A`. |
 | `sort_order` | Integer | No | Display order. |
 | `created_at` | Timestamp | Yes | Created timestamp. |
 | `updated_at` | Timestamp | Yes | Updated timestamp. |
 
 Indexes and constraints:
 
-- Unique index on `school_id` and `name`.
+- Unique index on `school_id`, `name`, and `section`.
 
-## 5.9 `sections`
-
-Purpose: Stores class sections such as A, B, or C.
-
-| Column | Type | Required | Description |
-| --- | --- | --- | --- |
-| `id` | UUID | Yes | Primary key. |
-| `school_id` | UUID | Yes | References `schools.id`. |
-| `class_id` | UUID | Yes | References `classes.id`. |
-| `name` | Text | Yes | Section name. |
-| `created_at` | Timestamp | Yes | Created timestamp. |
-| `updated_at` | Timestamp | Yes | Updated timestamp. |
-
-Indexes and constraints:
-
-- Unique index on `class_id` and `name`.
-- Index on `school_id`.
-
-## 5.10 `subjects`
+## 5.5 `subjects`
 
 Purpose: Stores subjects taught in the school.
 
@@ -246,40 +195,16 @@ Indexes and constraints:
 
 - Unique index on `school_id` and `name`.
 
-## 5.11 `parents`
+## 5.6 `students`
 
-Purpose: Stores parent or guardian contact records linked to students.
-
-| Column | Type | Required | Description |
-| --- | --- | --- | --- |
-| `id` | UUID | Yes | Primary key. |
-| `school_id` | UUID | Yes | References `schools.id`. |
-| `father_name` | Text | No | Father's name. |
-| `mother_name` | Text | No | Mother's name. |
-| `guardian_name` | Text | No | Guardian name. |
-| `phone` | Text | Yes | Primary contact phone. |
-| `alternate_phone` | Text | No | Alternate phone. |
-| `address` | Text | No | Parent or guardian address. |
-| `created_at` | Timestamp | Yes | Created timestamp. |
-| `updated_at` | Timestamp | Yes | Updated timestamp. |
-
-Indexes and constraints:
-
-- Index on `school_id`.
-- Index on `phone`.
-
-## 5.12 `students`
-
-Purpose: Stores student profiles, academic placement, lifecycle status, and parent link.
+Purpose: Stores student profile, class placement, lifecycle status, and parent or guardian contact details in one table.
 
 | Column | Type | Required | Description |
 | --- | --- | --- | --- |
 | `id` | UUID | Yes | Primary key. |
 | `school_id` | UUID | Yes | References `schools.id`. |
-| `parent_id` | UUID | Yes | References `parents.id`. |
 | `academic_year_id` | UUID | Yes | References `academic_years.id`. |
 | `class_id` | UUID | Yes | References `classes.id`. |
-| `section_id` | UUID | Yes | References `sections.id`. |
 | `fee_plan_id` | UUID nullable | No | References `fee_plans.id`. |
 | `photo_url` | Text | No | Student photo URL. |
 | `name` | Text | Yes | Student full name. |
@@ -289,6 +214,12 @@ Purpose: Stores student profiles, academic placement, lifecycle status, and pare
 | `roll_number` | Text | No | Class roll number. |
 | `admission_date` | Date | Yes | Admission date. |
 | `status` | StudentStatus | Yes | Student lifecycle status. |
+| `father_name` | Text | No | Father's name. |
+| `mother_name` | Text | No | Mother's name. |
+| `guardian_name` | Text | No | Guardian name. |
+| `parent_phone` | Text | Yes | Primary parent or guardian phone. |
+| `alternate_phone` | Text | No | Alternate contact phone. |
+| `address` | Text | No | Student or guardian address. |
 | `created_at` | Timestamp | Yes | Created timestamp. |
 | `updated_at` | Timestamp | Yes | Updated timestamp. |
 | `created_by` | UUID nullable | No | References `users.id`. |
@@ -297,12 +228,12 @@ Purpose: Stores student profiles, academic placement, lifecycle status, and pare
 Indexes and constraints:
 
 - Unique index on `school_id` and `admission_number`.
-- Unique index on `academic_year_id`, `class_id`, `section_id`, and `roll_number` where roll number exists.
-- Index on `school_id`, `status`.
-- Index on `class_id`, `section_id`.
-- Index on `parent_id`.
+- Unique index on `academic_year_id`, `class_id`, and `roll_number` where roll number exists.
+- Index on `school_id` and `status`.
+- Index on `class_id`.
+- Index on `parent_phone`.
 
-## 5.13 `teachers`
+## 5.7 `teachers`
 
 Purpose: Stores teacher profiles and employment status.
 
@@ -326,9 +257,9 @@ Indexes and constraints:
 - Unique index on `user_id` where present.
 - Index on `school_id` and `status`.
 
-## 5.14 `teacher_assignments`
+## 5.8 `teacher_assignments`
 
-Purpose: Links teachers to classes, sections, and subjects.
+Purpose: Links teachers to class-section records and subjects.
 
 | Column | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -336,7 +267,6 @@ Purpose: Links teachers to classes, sections, and subjects.
 | `school_id` | UUID | Yes | References `schools.id`. |
 | `teacher_id` | UUID | Yes | References `teachers.id`. |
 | `class_id` | UUID | Yes | References `classes.id`. |
-| `section_id` | UUID | Yes | References `sections.id`. |
 | `subject_id` | UUID | Yes | References `subjects.id`. |
 | `academic_year_id` | UUID | Yes | References `academic_years.id`. |
 | `created_at` | Timestamp | Yes | Created timestamp. |
@@ -344,11 +274,11 @@ Purpose: Links teachers to classes, sections, and subjects.
 
 Indexes and constraints:
 
-- Unique index on `teacher_id`, `class_id`, `section_id`, `subject_id`, and `academic_year_id`.
-- Index on `class_id`, `section_id`.
+- Unique index on `teacher_id`, `class_id`, `subject_id`, and `academic_year_id`.
+- Index on `class_id`.
 - Index on `subject_id`.
 
-## 5.15 `student_attendance`
+## 5.9 `student_attendance`
 
 Purpose: Stores daily attendance status for students.
 
@@ -358,7 +288,6 @@ Purpose: Stores daily attendance status for students.
 | `school_id` | UUID | Yes | References `schools.id`. |
 | `student_id` | UUID | Yes | References `students.id`. |
 | `class_id` | UUID | Yes | References `classes.id`. |
-| `section_id` | UUID | Yes | References `sections.id`. |
 | `academic_year_id` | UUID | Yes | References `academic_years.id`. |
 | `date` | Date | Yes | Attendance date. |
 | `status` | AttendanceStatus | Yes | Attendance status. |
@@ -369,11 +298,13 @@ Purpose: Stores daily attendance status for students.
 
 Indexes and constraints:
 
-- Unique index on `student_id` and `date`.
-- Index on `class_id`, `section_id`, and `date`.
-- Index on `academic_year_id`.
+- Unique index on `school_id`, `student_id`, and `date`.
+- Index on `school_id`, `class_id`, and `date`.
+- Index on `school_id`, `date`, and `status`.
+- Index on `student_id` and `date`.
+- Index on `school_id`, `academic_year_id`, and `date`.
 
-## 5.16 `teacher_attendance`
+## 5.10 `teacher_attendance`
 
 Purpose: Stores daily attendance status for teachers.
 
@@ -391,10 +322,12 @@ Purpose: Stores daily attendance status for teachers.
 
 Indexes and constraints:
 
-- Unique index on `teacher_id` and `date`.
+- Unique index on `school_id`, `teacher_id`, and `date`.
 - Index on `school_id` and `date`.
+- Index on `school_id`, `date`, and `status`.
+- Index on `teacher_id` and `date`.
 
-## 5.17 `leave_requests`
+## 5.11 `leave_requests`
 
 Purpose: Stores teacher leave requests and Principal review decisions.
 
@@ -419,36 +352,19 @@ Indexes and constraints:
 - Index on `school_id` and `status`.
 - Check that `to_date >= from_date`.
 
-## 5.18 `fee_categories`
+## 5.12 `fee_plans`
 
-Purpose: Stores fee category labels such as Admission Fee, Monthly Fee, Annual Fee, Exam Fee, and Miscellaneous Fee.
-
-| Column | Type | Required | Description |
-| --- | --- | --- | --- |
-| `id` | UUID | Yes | Primary key. |
-| `school_id` | UUID | Yes | References `schools.id`. |
-| `name` | Text | Yes | Fee category name. |
-| `description` | Text | No | Optional description. |
-| `created_at` | Timestamp | Yes | Created timestamp. |
-| `updated_at` | Timestamp | Yes | Updated timestamp. |
-
-Indexes and constraints:
-
-- Unique index on `school_id` and `name`.
-
-## 5.19 `fee_plans`
-
-Purpose: Stores configured fee plans that can be assigned to students.
+Purpose: Stores fee category, amount, and frequency in one table.
 
 | Column | Type | Required | Description |
 | --- | --- | --- | --- |
 | `id` | UUID | Yes | Primary key. |
 | `school_id` | UUID | Yes | References `schools.id`. |
-| `category_id` | UUID | Yes | References `fee_categories.id`. |
+| `class_id` | UUID nullable | No | Optional class-specific fee plan. |
+| `category` | Text | Yes | Fee category, for example Admission Fee or Monthly Fee. |
 | `name` | Text | Yes | Fee plan name. |
 | `amount` | Decimal | Yes | Fee amount. |
 | `frequency` | FeeFrequency | Yes | Fee frequency. |
-| `class_id` | UUID nullable | No | Optional class-specific plan. |
 | `is_active` | Boolean | Yes | Whether the plan is active. |
 | `created_at` | Timestamp | Yes | Created timestamp. |
 | `updated_at` | Timestamp | Yes | Updated timestamp. |
@@ -456,10 +372,10 @@ Purpose: Stores configured fee plans that can be assigned to students.
 Indexes and constraints:
 
 - Unique index on `school_id` and `name`.
-- Index on `category_id`.
 - Index on `class_id`.
+- Index on `category`.
 
-## 5.20 `fee_ledgers`
+## 5.13 `fee_ledgers`
 
 Purpose: Stores student payable items, due amounts, paid amounts, and status.
 
@@ -482,22 +398,26 @@ Purpose: Stores student payable items, due amounts, paid amounts, and status.
 Indexes and constraints:
 
 - Index on `student_id`.
-- Index on `school_id`, `status`.
+- Index on `school_id` and `status`.
 - Index on `due_date`.
 
-## 5.21 `payments`
+## 5.14 `payments`
 
-Purpose: Stores fee payments collected from students.
+Purpose: Stores payment, ledger allocation, and receipt data in one table.
 
 | Column | Type | Required | Description |
 | --- | --- | --- | --- |
 | `id` | UUID | Yes | Primary key. |
 | `school_id` | UUID | Yes | References `schools.id`. |
 | `student_id` | UUID | Yes | References `students.id`. |
+| `fee_ledger_id` | UUID nullable | No | Main ledger item paid. Keep nullable for advance or mixed payments. |
+| `allocation_details` | Json | No | Optional list of ledger IDs and allocated amounts for mixed payments. |
 | `amount` | Decimal | Yes | Payment amount. |
 | `payment_method` | PaymentMethod | Yes | Payment method. |
 | `payment_date` | Date | Yes | Payment date. |
 | `reference_number` | Text | No | UPI or bank reference number. |
+| `receipt_number` | Text | Yes | Unique receipt number. |
+| `receipt_date` | Date | Yes | Receipt date. |
 | `collected_by` | UUID | Yes | References `users.id`. |
 | `notes` | Text | No | Optional payment notes. |
 | `created_at` | Timestamp | Yes | Created timestamp. |
@@ -505,53 +425,15 @@ Purpose: Stores fee payments collected from students.
 
 Indexes and constraints:
 
+- Unique index on `school_id` and `receipt_number`.
 - Index on `student_id`.
+- Index on `fee_ledger_id`.
 - Index on `payment_date`.
-- Index on `collected_by`.
 - Payment amount must be greater than zero.
 
-## 5.22 `payment_allocations`
+## 5.15 `exams`
 
-Purpose: Links a payment to one or more fee ledger items. This supports partial payments and payments covering multiple dues.
-
-| Column | Type | Required | Description |
-| --- | --- | --- | --- |
-| `id` | UUID | Yes | Primary key. |
-| `payment_id` | UUID | Yes | References `payments.id`. |
-| `fee_ledger_id` | UUID | Yes | References `fee_ledgers.id`. |
-| `amount` | Decimal | Yes | Amount allocated to this ledger item. |
-| `created_at` | Timestamp | Yes | Created timestamp. |
-
-Indexes and constraints:
-
-- Unique index on `payment_id` and `fee_ledger_id`.
-- Index on `fee_ledger_id`.
-
-## 5.23 `receipts`
-
-Purpose: Stores receipt records generated for payments.
-
-| Column | Type | Required | Description |
-| --- | --- | --- | --- |
-| `id` | UUID | Yes | Primary key. |
-| `school_id` | UUID | Yes | References `schools.id`. |
-| `payment_id` | UUID | Yes | References `payments.id`. |
-| `student_id` | UUID | Yes | References `students.id`. |
-| `receipt_number` | Text | Yes | Unique receipt number. |
-| `receipt_date` | Date | Yes | Receipt date. |
-| `amount` | Decimal | Yes | Receipt amount. |
-| `generated_by` | UUID | Yes | References `users.id`. |
-| `created_at` | Timestamp | Yes | Created timestamp. |
-
-Indexes and constraints:
-
-- Unique index on `school_id` and `receipt_number`.
-- Unique index on `payment_id`.
-- Index on `student_id`.
-
-## 5.24 `exams`
-
-Purpose: Stores exam definitions and lifecycle state.
+Purpose: Stores exam definitions and subject mark configuration. MVP keeps subject setup in JSON to avoid an `exam_subjects` table.
 
 | Column | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -564,6 +446,7 @@ Purpose: Stores exam definitions and lifecycle state.
 | `start_date` | Date | Yes | Exam start date. |
 | `end_date` | Date | Yes | Exam end date. |
 | `status` | ExamStatus | Yes | Exam status. |
+| `subject_config` | Json | Yes | Subject IDs, maximum marks, and optional pass marks. |
 | `created_at` | Timestamp | Yes | Created timestamp. |
 | `updated_at` | Timestamp | Yes | Updated timestamp. |
 
@@ -573,34 +456,15 @@ Indexes and constraints:
 - Index on `school_id` and `status`.
 - Check that `end_date >= start_date`.
 
-## 5.25 `exam_subjects`
+## 5.16 `marks`
 
-Purpose: Links exams with subjects and maximum marks.
-
-| Column | Type | Required | Description |
-| --- | --- | --- | --- |
-| `id` | UUID | Yes | Primary key. |
-| `exam_id` | UUID | Yes | References `exams.id`. |
-| `subject_id` | UUID | Yes | References `subjects.id`. |
-| `maximum_marks` | Decimal | Yes | Maximum marks for subject. |
-| `pass_marks` | Decimal | No | Optional pass marks. |
-| `created_at` | Timestamp | Yes | Created timestamp. |
-| `updated_at` | Timestamp | Yes | Updated timestamp. |
-
-Indexes and constraints:
-
-- Unique index on `exam_id` and `subject_id`.
-
-## 5.26 `marks`
-
-Purpose: Stores student marks for exam subjects.
+Purpose: Stores student marks for exam subjects. Result totals and percentages can be calculated from this table.
 
 | Column | Type | Required | Description |
 | --- | --- | --- | --- |
 | `id` | UUID | Yes | Primary key. |
 | `school_id` | UUID | Yes | References `schools.id`. |
 | `exam_id` | UUID | Yes | References `exams.id`. |
-| `exam_subject_id` | UUID | Yes | References `exam_subjects.id`. |
 | `student_id` | UUID | Yes | References `students.id`. |
 | `subject_id` | UUID | Yes | References `subjects.id`. |
 | `marks_obtained` | Decimal | Yes | Marks obtained by student. |
@@ -613,38 +477,11 @@ Indexes and constraints:
 
 - Unique index on `exam_id`, `student_id`, and `subject_id`.
 - Index on `student_id`.
-- Index on `exam_subject_id`.
 - Marks obtained must not exceed maximum marks.
 
-## 5.27 `results`
+## 5.17 `notifications`
 
-Purpose: Stores generated and published student result summaries.
-
-| Column | Type | Required | Description |
-| --- | --- | --- | --- |
-| `id` | UUID | Yes | Primary key. |
-| `school_id` | UUID | Yes | References `schools.id`. |
-| `exam_id` | UUID | Yes | References `exams.id`. |
-| `student_id` | UUID | Yes | References `students.id`. |
-| `total_marks` | Decimal | Yes | Total marks obtained. |
-| `maximum_marks` | Decimal | Yes | Maximum possible marks. |
-| `percentage` | Decimal | Yes | Result percentage. |
-| `rank` | Integer | No | Class or section rank. |
-| `status` | ResultStatus | Yes | Result status. |
-| `generated_by` | UUID | Yes | References `users.id`. |
-| `published_at` | Timestamp | No | Publication timestamp. |
-| `created_at` | Timestamp | Yes | Created timestamp. |
-| `updated_at` | Timestamp | Yes | Updated timestamp. |
-
-Indexes and constraints:
-
-- Unique index on `exam_id` and `student_id`.
-- Index on `student_id`.
-- Index on `school_id` and `status`.
-
-## 5.28 `notifications`
-
-Purpose: Stores message campaigns or notification requests.
+Purpose: Stores message campaigns, selected recipients, message body, and provider delivery summary in one table.
 
 | Column | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -654,7 +491,9 @@ Purpose: Stores message campaigns or notification requests.
 | `audience_type` | NotificationAudienceType | Yes | Audience selection type. |
 | `title` | Text | No | Internal title. |
 | `message` | Text | Yes | Message body. |
-| `metadata` | Json | No | Filter details or provider metadata. |
+| `recipients` | Json | No | Recipient IDs, phone numbers, and delivery status details. |
+| `status` | NotificationStatus | Yes | Campaign delivery status. |
+| `provider_response` | Json | No | Provider result summary or error details. |
 | `created_by` | UUID | Yes | References `users.id`. |
 | `created_at` | Timestamp | Yes | Created timestamp. |
 | `updated_at` | Timestamp | Yes | Updated timestamp. |
@@ -662,77 +501,10 @@ Purpose: Stores message campaigns or notification requests.
 Indexes and constraints:
 
 - Index on `school_id` and `category`.
+- Index on `status`.
 - Index on `created_by`.
 
-## 5.29 `notification_logs`
-
-Purpose: Stores recipient-level delivery records for notifications.
-
-| Column | Type | Required | Description |
-| --- | --- | --- | --- |
-| `id` | UUID | Yes | Primary key. |
-| `notification_id` | UUID | Yes | References `notifications.id`. |
-| `recipient_type` | Text | Yes | Recipient type, for example parent or teacher. |
-| `recipient_id` | UUID nullable | No | Related student, parent, or teacher ID where applicable. |
-| `recipient_phone` | Text | Yes | Destination phone number. |
-| `status` | NotificationStatus | Yes | Delivery status. |
-| `provider_message_id` | Text | No | Provider message ID. |
-| `error_message` | Text | No | Provider or delivery error. |
-| `sent_at` | Timestamp | No | Sent timestamp. |
-| `delivered_at` | Timestamp | No | Delivered timestamp. |
-| `created_at` | Timestamp | Yes | Created timestamp. |
-| `updated_at` | Timestamp | Yes | Updated timestamp. |
-
-Indexes and constraints:
-
-- Index on `notification_id`.
-- Index on `status`.
-- Index on `recipient_phone`.
-
-## 5.30 `message_templates`
-
-Purpose: Stores reusable WhatsApp message templates.
-
-| Column | Type | Required | Description |
-| --- | --- | --- | --- |
-| `id` | UUID | Yes | Primary key. |
-| `school_id` | UUID | Yes | References `schools.id`. |
-| `category` | NotificationCategory | Yes | Template category. |
-| `name` | Text | Yes | Template name. |
-| `body` | Text | Yes | Template body. |
-| `is_active` | Boolean | Yes | Whether template is active. |
-| `created_at` | Timestamp | Yes | Created timestamp. |
-| `updated_at` | Timestamp | Yes | Updated timestamp. |
-
-Indexes and constraints:
-
-- Unique index on `school_id` and `name`.
-- Index on `category`.
-
-## 5.31 `communication_settings`
-
-Purpose: Stores WhatsApp provider configuration for the school.
-
-| Column | Type | Required | Description |
-| --- | --- | --- | --- |
-| `id` | UUID | Yes | Primary key. |
-| `school_id` | UUID | Yes | References `schools.id`. |
-| `provider` | Text | Yes | WhatsApp provider name. |
-| `sender_id` | Text | No | Provider sender ID. |
-| `config` | Json | No | Non-secret provider configuration. |
-| `is_active` | Boolean | Yes | Whether communication is active. |
-| `created_at` | Timestamp | Yes | Created timestamp. |
-| `updated_at` | Timestamp | Yes | Updated timestamp. |
-
-Indexes and constraints:
-
-- Unique index on `school_id`.
-
-Security note:
-
-- Do not store raw API secrets in this table unless encrypted. Prefer environment variables or a managed secret store.
-
-## 5.32 `audit_logs`
+## 5.18 `audit_logs`
 
 Purpose: Stores append-only audit records for sensitive actions.
 
@@ -757,56 +529,75 @@ Indexes and constraints:
 - Index on `entity_type` and `entity_id`.
 - Index on `created_at`.
 
-## 6. Transaction Requirements
+## 6. Removed or Merged Tables
+
+| Old table | MVP decision |
+| --- | --- |
+| `roles` | Replaced by `users.role`. |
+| `permissions` | Replaced by application-level permission rules mapped to `UserRole`. |
+| `role_permissions` | Removed for MVP. |
+| `user_roles` | Removed because each user has one MVP role. |
+| `sections` | Merged into `classes.section`. |
+| `parents` | Merged into parent and guardian fields on `students`. |
+| `fee_categories` | Merged into `fee_plans.category`. |
+| `payment_allocations` | Merged into `payments.allocation_details` JSON. |
+| `receipts` | Merged into `payments.receipt_number` and `payments.receipt_date`. |
+| `exam_subjects` | Merged into `exams.subject_config` JSON. |
+| `results` | Removed; result summaries are calculated from `marks`. |
+| `notification_logs` | Merged into `notifications.recipients` and `notifications.provider_response`. |
+| `message_templates` | Merged into `schools.communication_config`. |
+| `communication_settings` | Merged into `schools.communication_config`. |
+
+## 7. Transaction Requirements
 
 Use database transactions for:
 
-- Student creation with parent creation.
-- Payment collection, payment allocations, ledger updates, and receipt generation.
+- Payment collection, ledger updates, and receipt number creation.
 - Attendance bulk save.
-- Result generation.
-- User role updates.
+- Marks bulk entry.
 - Leave approval when teacher attendance or leave reporting needs synchronization.
 
-## 7. Search and Reporting Indexes
+## 8. Search and Reporting Indexes
 
 Recommended indexes:
 
 - `students.name`
 - `students.admission_number`
-- `parents.phone`
+- `students.parent_phone`
 - `teachers.name`
 - `teachers.phone`
-- `student_attendance.date`
-- `teacher_attendance.date`
+- `student_attendance.school_id`, `class_id`, `date`
+- `student_attendance.school_id`, `date`, `status`
+- `teacher_attendance.school_id`, `date`
+- `teacher_attendance.school_id`, `date`, `status`
 - `fee_ledgers.status`
 - `fee_ledgers.due_date`
 - `payments.payment_date`
+- `payments.receipt_number`
 - `exams.status`
-- `notification_logs.status`
+- `notifications.status`
 
 For better search later, PostgreSQL trigram indexes can be added for student and teacher names.
 
-## 8. Prisma Implementation Notes
+## 9. Prisma Implementation Notes
 
 - Use Prisma `@@map` and `@map` if database table names use snake_case.
 - Use Prisma `Decimal` for money and marks.
 - Use explicit relation names when a table references `users` more than once.
 - Add compound unique constraints for attendance, marks, assignments, and receipts.
 - Keep enum names stable because application code will depend on them.
-- Seed default roles and permissions during initial setup.
+- Implement permission checks in code from `users.role` for the MVP.
+- Only split JSON columns into dedicated tables after the workflow needs searching, filtering, or reporting on that data.
 
-## 9. Seed Data Requirements
+## 10. Seed Data Requirements
 
 Initial seed should create:
 
 - One school record.
-- Default permissions.
-- Default roles.
-- Role-permission mappings.
 - Default academic year.
-- Common fee categories.
-- Optional demo classes, sections, and subjects for development.
+- Default users for Principal, Teacher, Accountant, and Receptionist if demo data is enabled.
+- Optional demo classes and subjects for development.
+- Common fee plans for development.
 
 Default role behavior:
 
@@ -815,17 +606,16 @@ Default role behavior:
 - Accountant: student view, fees, payments, receipts, fee reports.
 - Receptionist: admissions, students, parent information, communication support.
 
-## 10. Data Integrity Rules
+## 11. Data Integrity Rules
 
-- A student must belong to one class and section for the active academic year.
-- A student must have one parent or guardian contact record.
+- A student must belong to one class-section record for the active academic year.
+- A student must have one primary parent or guardian phone number.
 - A student can have only one attendance record per date.
 - A teacher can have only one attendance record per date.
 - A teacher assignment cannot be duplicated for the same academic year.
-- A fee payment must generate exactly one receipt.
-- A payment can be allocated to one or more ledger items.
+- A payment must generate exactly one receipt number.
 - A ledger balance must equal amount due minus amount paid.
 - Marks obtained cannot be greater than maximum marks.
-- A result can be generated only after marks exist for the required subjects.
-- Notification logs must remain even when delivery fails.
+- Result summaries should be generated from marks at read/export time.
+- Notification recipient details can stay in JSON for MVP, but must keep enough detail to troubleshoot failed sends.
 - Audit logs must not be hard deleted through normal application flows.

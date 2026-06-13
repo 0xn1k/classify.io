@@ -128,12 +128,12 @@ Primary needs:
 
 ### 6.1 RBAC Model
 
-Each user is assigned one or more roles. Each role maps to a set of permissions. Permissions determine access to screens, APIs, records, and actions.
+Each user is assigned one MVP role. The application maps that role to a fixed set of permissions in code. Permissions determine access to screens, APIs, records, and actions without requiring separate role and permission tables for the MVP.
 
 ```text
 User
   -> Role
-    -> Permissions
+    -> Application permission rules
 ```
 
 ### 6.2 Default Roles
@@ -868,7 +868,7 @@ Main flow:
 Acceptance criteria:
 
 - User can send to all parents, class wise, section wise, fee defaulters, or teachers.
-- Each message creates notification and notification log records.
+- Each message creates one notification record with recipient delivery details.
 - Delivery status is visible as queued, sent, delivered, or failed.
 
 #### UC-COM-002: Send Fee Reminder
@@ -890,7 +890,7 @@ Main flow:
 Acceptance criteria:
 
 - Reminder is sent only to students with outstanding dues in the selected filter.
-- Notification logs link back to the selected audience and message category.
+- Notification recipient details link back to the selected audience and message category.
 
 ## 15. Exams and Results
 
@@ -1065,7 +1065,7 @@ Acceptance criteria:
 
 ### 17.1 Objective
 
-Manage system users, roles, permissions, and account status.
+Manage system users, one assigned role per user, and account status.
 
 ### 17.2 User Fields
 
@@ -1073,7 +1073,7 @@ Manage system users, roles, permissions, and account status.
 - Email
 - Phone
 - Status
-- Roles
+- Role
 
 ### 17.3 Default Roles
 
@@ -1087,7 +1087,6 @@ Manage system users, roles, permissions, and account status.
 ```text
 Create user
   -> Assign role
-  -> Assign permissions
   -> Activate user
 ```
 
@@ -1111,29 +1110,28 @@ Main flow:
 Acceptance criteria:
 
 - Email or phone used for login must be unique.
-- New user cannot access modules outside assigned role permissions.
+- New user cannot access modules outside the assigned role's application permissions.
 
-#### UC-USR-002: Assign Role and Permissions
+#### UC-USR-002: Change User Role
 
 Actor: Principal
 
 Preconditions:
 
 - User exists.
-- Role exists.
-- Principal has `MANAGE_ROLES` permission.
+- Principal has `MANAGE_USERS` permission.
 
 Main flow:
 
 1. Principal opens user profile.
-2. Principal assigns role.
-3. Principal reviews permissions.
+2. Principal changes the user's role.
+3. System shows the access summary for that role.
 4. Principal saves changes.
 
 Acceptance criteria:
 
-- Permission changes take effect on next request or next login.
-- Permission changes are audit logged.
+- Role changes take effect on next request or next login.
+- Role changes are audit logged.
 
 ## 18. Settings
 
@@ -1193,12 +1191,12 @@ Preconditions:
 Main flow:
 
 1. Principal opens academic configuration.
-2. Principal creates or updates academic year, classes, sections, and subjects.
+2. Principal creates or updates academic year, class-section records, and subjects.
 3. System saves configuration.
 
 Acceptance criteria:
 
-- Classes, sections, and subjects are available in student, teacher, attendance, and exam workflows.
+- Class-section records and subjects are available in student, teacher, attendance, and exam workflows.
 
 #### UC-SET-003: Configure WhatsApp Templates
 
@@ -1233,7 +1231,7 @@ Acceptance criteria:
 
 - All protected screens and APIs must enforce permission checks.
 - Users must not access records or actions outside their role permissions.
-- Teachers must be restricted to assigned classes, sections, and subjects unless granted broader permissions.
+- Teachers must be restricted to assigned class-section records and subjects unless granted broader permissions.
 
 ### 19.3 Audit Logging
 
@@ -1243,7 +1241,7 @@ Audit logs must track:
 - Fee collections
 - Attendance changes
 - Result updates
-- Permission changes
+- Role changes
 - User status changes
 - Settings changes
 
@@ -1261,16 +1259,12 @@ Audit log fields:
 
 ### 20.1 Core Tables
 
+- `schools`
 - `users`
-- `roles`
-- `permissions`
-- `role_permissions`
-- `user_roles`
+- `academic_years`
 - `students`
-- `parents`
 - `teachers`
 - `classes`
-- `sections`
 - `subjects`
 - `teacher_assignments`
 - `student_attendance`
@@ -1279,12 +1273,9 @@ Audit log fields:
 - `fee_plans`
 - `fee_ledgers`
 - `payments`
-- `receipts`
 - `exams`
-- `exam_subjects`
 - `marks`
 - `notifications`
-- `notification_logs`
 - `audit_logs`
 
 ### 20.2 Key Data Rules
@@ -1335,9 +1326,9 @@ The MVP must support:
 The SchoolOS MVP is complete when:
 
 - Principal can log in and access all modules.
-- Principal can create users, assign roles, and manage permissions.
+- Principal can create users and assign one fixed MVP role per user.
 - Receptionist can create, edit, archive, and search students.
-- Principal can create teachers and assign them to classes, sections, and subjects.
+- Principal can create teachers and assign them to class-section records and subjects.
 - Teacher can mark student attendance for assigned classes.
 - Principal can manage teacher attendance.
 - Teacher can apply for leave.
@@ -1347,7 +1338,7 @@ The SchoolOS MVP is complete when:
 - Authorized users can send WhatsApp notices and reminders to selected audiences.
 - Principal can create exams, teachers can enter marks, and Principal can generate results.
 - Reports are available for students, attendance, fees, teachers, leave, and exams.
-- Settings allow configuration of school information, academic years, classes, sections, subjects, WhatsApp details, and message templates.
+- Settings allow configuration of school information, academic years, class-section records, subjects, WhatsApp details, and message templates.
 - Sensitive changes are written to audit logs.
 - Role-based permissions are enforced across screens and APIs.
 

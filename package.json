@@ -1,0 +1,21 @@
+{
+  "name": "schoolos",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev --workspace @schoolos/api",
+    "dev:web": "npm run dev --workspace @schoolos/web",
+    "build:web": "npm run build --workspace @schoolos/web",
+    "build:api": "npm run build --workspace @schoolos/api",
+    "typecheck": "npm run typecheck --workspace @schoolos/api && npm run typecheck --workspace @schoolos/web",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0",
+    "typescript": "^5.6.3"
+  }
+}

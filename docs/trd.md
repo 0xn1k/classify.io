@@ -24,7 +24,7 @@ The system must be easy to maintain, predictable for a small engineering team, a
 
 - Keep the product modular by domain, not by technical layer alone.
 - Use Supabase Auth as the source of authentication identity.
-- Use the application database as the source of business roles, permissions, and school data.
+- Use the application database as the source of users, fixed MVP roles, and school data.
 - Keep the API as the primary enforcement point for authorization and business rules.
 - Use Prisma for database access and schema migrations.
 - Keep frontend components simple, accessible, and reusable.
@@ -253,19 +253,19 @@ User logs in through Next.js
   -> Next.js sends access token to Hono API
   -> Hono validates token
   -> Hono loads local user by supabase_user_id
-  -> Hono checks role and permissions
+  -> Hono checks the user's role and application permission rules
   -> Request continues or fails
 ```
 
 ### 8.3 Authorization
 
-Authorization is handled by application RBAC.
+Authorization is handled by application RBAC with one fixed MVP role per user.
 
 Requirements:
 
 - API middleware must require authentication for protected routes.
-- API middleware must verify required permissions per route.
-- Teachers must be restricted to assigned classes, sections, and subjects for attendance and marks workflows.
+- API middleware must verify the required application permission for the user's role.
+- Teachers must be restricted to assigned class-section records and subjects for attendance and marks workflows.
 - Principal role gets full access.
 - Inactive users must be denied access even if Supabase authentication succeeds.
 
@@ -274,10 +274,8 @@ Requirements:
 ### 9.1 Entities
 
 - `users`
-- `roles`
-- `permissions`
-- `role_permissions`
-- `user_roles`
+
+Permissions are fixed application rules mapped to `users.role` for the MVP. Dedicated `roles`, `permissions`, `role_permissions`, and `user_roles` tables can be added later if schools need custom roles.
 
 ### 9.2 Default Roles
 
@@ -422,8 +420,6 @@ GET /settings/academic-years
 POST /settings/academic-years
 GET /settings/classes
 POST /settings/classes
-GET /settings/sections
-POST /settings/sections
 GET /settings/subjects
 POST /settings/subjects
 GET /settings/communication
@@ -438,11 +434,7 @@ POST /users
 GET /users/:id
 PATCH /users/:id
 PATCH /users/:id/status
-GET /roles
-POST /roles
-GET /permissions
-POST /users/:id/roles
-DELETE /users/:id/roles/:roleId
+PATCH /users/:id/role
 ```
 
 ## 11. Prisma and Database Requirements
@@ -497,7 +489,7 @@ The MVP uses WhatsApp as the only delivery channel.
 Implementation requirements:
 
 - Store message request in `notifications`.
-- Store recipient-level delivery status in `notification_logs`.
+- Store recipient-level delivery status in `notifications.recipients` for the MVP.
 - Support queued, sent, delivered, and failed statuses.
 - Keep provider configuration in settings.
 - Do not block the main UI while provider delivery is in progress.
