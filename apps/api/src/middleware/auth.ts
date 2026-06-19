@@ -1,7 +1,6 @@
 import { createMiddleware } from "hono/factory";
 import { ApiError } from "../lib/errors.js";
 import { prisma } from "../lib/prisma.js";
-import { roles } from "../lib/rbac.js";
 import { verifySupabaseToken } from "../lib/supabase.js";
 import type { AppBindings, AppUser } from "../types.js";
 
@@ -17,7 +16,8 @@ export const requireAuth = createMiddleware<AppBindings>(async (c, next) => {
   const user = await prisma.user.findUnique({
     where: {
       supabaseUserId: payload.sub
-    }
+    },
+    include: { roles: true }
   });
 
   if (!user) {
@@ -28,17 +28,19 @@ export const requireAuth = createMiddleware<AppBindings>(async (c, next) => {
     throw new ApiError(403, "FORBIDDEN", "User is inactive");
   }
 
-  if (!roles.some((role) => role === user.role)) {
-    throw new ApiError(403, "FORBIDDEN", "User role is not supported");
+  const userRoles = user.roles.map((assignment) => assignment.role);
+  if (userRoles.length === 0) {
+    throw new ApiError(403, "FORBIDDEN", "User has no roles assigned");
   }
 
   c.set("user", {
     id: user.id,
     schoolId: user.schoolId,
-    supabaseUserId: user.supabaseUserId,
+    supabaseUserId: payload.sub,
     name: user.name,
     email: user.email,
-    role: user.role as AppUser["role"],
+    phone: user.phone,
+    roles: userRoles,
     status: user.status
   } satisfies AppUser);
 

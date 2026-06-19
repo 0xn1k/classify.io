@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum UserRole {
@@ -144,18 +145,31 @@ model School {
 model User {
   id             String     @id @default(uuid()) @db.Uuid
   schoolId       String     @map("school_id") @db.Uuid
-  supabaseUserId String     @unique @map("supabase_user_id") @db.Uuid
+  supabaseUserId String?    @unique @map("supabase_user_id") @db.Uuid
   name           String
-  email          String     @unique
-  phone          String?
-  role           UserRole
+  email          String?    @unique
+  phone          String     @unique
   status         UserStatus @default(ACTIVE)
   createdAt      DateTime   @default(now()) @map("created_at")
   updatedAt      DateTime   @updatedAt @map("updated_at")
   school         School     @relation(fields: [schoolId], references: [id])
+  roles          UserRoleAssignment[]
 
-  @@index([schoolId, role, status])
+  @@index([schoolId, status])
   @@map("users")
+}
+
+// A user can hold multiple roles; their effective permissions are the union (see rbac.ts).
+model UserRoleAssignment {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  role      UserRole
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+  @@index([userId])
+  @@map("user_roles")
 }
 
 model AcademicYear {

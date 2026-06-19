@@ -1,17 +1,22 @@
-import { AuthForm } from "@/components/auth-form";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import Link from "next/link";
+import { AuthLayout } from "@/components/auth/auth-layout";
+import { LoginForm } from "@/components/auth/login-form";
 
 export default function LoginPage() {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Sign in to SchoolOS</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <AuthForm />
-        </CardContent>
-      </Card>
-    </main>
+    <AuthLayout
+      title="Welcome back"
+      subtitle="Sign in with your registered mobile number."
+      footer={
+        <>
+          New institute?{" "}
+          <Link className="font-medium text-foreground underline-offset-4 hover:underline" href="/signup">
+            Create an account
+          </Link>
+        </>
+      }
+    >
+      <LoginForm />
+    </AuthLayout>
   );
 }

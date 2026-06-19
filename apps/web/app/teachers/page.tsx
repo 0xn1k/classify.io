@@ -1,12 +1,6 @@
-import { ModulePlaceholder } from "@/components/module-placeholder";
+import { redirect } from "next/navigation";
 
+// Staff management now lives on /users.
 export default function TeachersPage() {
-  return (
-    <ModulePlaceholder
-      active="/teachers"
-      title="Teachers"
-      description="Manage teacher profiles, status, and class or subject assignments."
-      actionLabel="New teacher"
-    />
-  );
+  redirect("/users");
 }

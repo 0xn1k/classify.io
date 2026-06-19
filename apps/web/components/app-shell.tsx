@@ -1,5 +1,8 @@
+"use client";
+
+import { useEffect, type ReactNode } from "react";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
   Bell,
@@ -8,25 +11,69 @@ import {
   ClipboardList,
   GraduationCap,
   LayoutDashboard,
+  Loader2,
   Receipt,
   Settings,
   Users
 } from "lucide-react";
+import type { Permission } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useCurrentUser } from "@/lib/use-current-user";
+import { UserMenu } from "@/components/user-menu";
 
-const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/students", label: "Students", icon: GraduationCap },
-  { href: "/teachers", label: "Teachers", icon: Users },
-  { href: "/attendance/students", label: "Attendance", icon: CalendarCheck },
-  { href: "/fees", label: "Fees", icon: Receipt },
-  { href: "/communication", label: "Communication", icon: Bell },
-  { href: "/exams", label: "Exams", icon: BookOpen },
-  { href: "/reports", label: "Reports", icon: BarChart3 },
-  { href: "/settings", label: "Settings", icon: Settings }
+// Each nav item declares the permission required to see it. Visibility mirrors the API's
+// RBAC (returned on GET /me); the API remains the real per-endpoint enforcement point.
+const navItems: { href: string; label: string; icon: typeof LayoutDashboard; permission: Permission }[] = [
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, permission: "VIEW_DASHBOARD" },
+  { href: "/students", label: "Students", icon: GraduationCap, permission: "VIEW_STUDENTS" },
+  { href: "/users", label: "Users", icon: Users, permission: "MANAGE_USERS" },
+  { href: "/attendance/students", label: "Attendance", icon: CalendarCheck, permission: "MARK_STUDENT_ATTENDANCE" },
+  { href: "/fees", label: "Fees", icon: Receipt, permission: "VIEW_FEES" },
+  { href: "/communication", label: "Communication", icon: Bell, permission: "SEND_NOTIFICATIONS" },
+  { href: "/exams", label: "Exams", icon: BookOpen, permission: "MANAGE_EXAMS" },
+  { href: "/reports", label: "Reports", icon: BarChart3, permission: "VIEW_REPORTS" },
+  { href: "/settings", label: "Settings", icon: Settings, permission: "MANAGE_SETTINGS" }
 ];
 
-export function AppShell({ children, active = "/dashboard" }: { children: ReactNode; active?: string }) {
+// Permission required to view a path (longest matching nav prefix). Paths not in the nav
+// (e.g. /profile) have no requirement.
+function requiredPermissionFor(path: string): Permission | undefined {
+  const match = navItems
+    .filter((item) => path === item.href || path.startsWith(`${item.href}/`))
+    .sort((a, b) => b.href.length - a.href.length)[0];
+  return match?.permission;
+}
+
+export function AppShell({ children, active }: { children: ReactNode; active?: string }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const { user, isLoading } = useCurrentUser();
+  const activePath = active ?? pathname ?? "/dashboard";
+
+  const required = requiredPermissionFor(activePath);
+  const allowed = !required || (user?.permissions.includes(required) ?? false);
+
+  // Client-side guards: bounce unauthenticated users to /login, and users who lack the
+  // current page's permission to /dashboard (every role has VIEW_DASHBOARD).
+  useEffect(() => {
+    if (isLoading) return;
+    if (!user) {
+      router.replace("/login");
+    } else if (!allowed) {
+      router.replace("/dashboard");
+    }
+  }, [isLoading, user, allowed, router]);
+
+  if (isLoading || !user || !allowed) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-label="Loading" />
+      </div>
+    );
+  }
+
+  const visibleNav = navItems.filter((item) => user.permissions.includes(item.permission));
+
   return (
     <div className="min-h-screen bg-background">
       <aside className="fixed inset-y-0 left-0 hidden w-64 border-r bg-card lg:block">
@@ -40,9 +87,9 @@ export function AppShell({ children, active = "/dashboard" }: { children: ReactN
           </div>
         </div>
         <nav className="space-y-1 p-3">
-          {navItems.map((item) => {
+          {visibleNav.map((item) => {
             const Icon = item.icon;
-            const isActive = active === item.href || active.startsWith(`${item.href}/`);
+            const isActive = activePath === item.href || activePath.startsWith(`${item.href}/`);
 
             return (
               <Link
@@ -66,7 +113,7 @@ export function AppShell({ children, active = "/dashboard" }: { children: ReactN
             <div className="text-sm font-medium">Classify School</div>
             <div className="text-xs text-muted-foreground">Academic year 2026-2027</div>
           </div>
-          <div className="rounded-md border px-3 py-1.5 text-xs text-muted-foreground">Principal</div>
+          <UserMenu user={user} />
         </div>
         <div className="p-4 lg:p-6">{children}</div>
       </main>

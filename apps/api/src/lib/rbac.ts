@@ -62,3 +62,25 @@ const rolePermissions: Record<UserRole, Set<Permission>> = {
 export function hasPermission(role: UserRole, permission: Permission): boolean {
   return rolePermissions[role]?.has(permission) ?? false;
 }
+
+// Array form of a role's permissions — used to drive client-side nav/visibility from this
+// single source of truth (e.g. returned by GET /me).
+export function permissionsForRole(role: UserRole): Permission[] {
+  return [...(rolePermissions[role] ?? new Set<Permission>())];
+}
+
+// Union of permissions across all of a user's roles. A multi-role user sees every module
+// any of their roles grants.
+export function permissionsForRoles(roles: UserRole[]): Permission[] {
+  const set = new Set<Permission>();
+  for (const role of roles) {
+    for (const permission of rolePermissions[role] ?? []) {
+      set.add(permission);
+    }
+  }
+  return [...set];
+}
+
+export function hasAnyPermission(roles: UserRole[], permission: Permission): boolean {
+  return roles.some((role) => rolePermissions[role]?.has(permission) ?? false);
+}

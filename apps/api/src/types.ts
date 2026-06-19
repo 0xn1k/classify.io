@@ -6,8 +6,9 @@ export type AppUser = {
   schoolId: string;
   supabaseUserId: string;
   name: string;
-  email: string;
-  role: UserRole;
+  email: string | null;
+  phone: string;
+  roles: UserRole[];
   status: UserStatus;
 };
 

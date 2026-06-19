@@ -1,15 +1,17 @@
-import { jwtVerify } from "jose";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 import { requireEnv } from "./env.js";
 
 export type SupabaseJwtPayload = {
   sub: string;
+  phone?: string;
   email?: string;
-  role?: string;
 };
 
+// Supabase signs access tokens with asymmetric (ES256) keys; verify against the project JWKS.
+const jwks = createRemoteJWKSet(new URL(`${requireEnv("supabaseUrl")}/auth/v1/.well-known/jwks.json`));
+
 export async function verifySupabaseToken(token: string): Promise<SupabaseJwtPayload> {
-  const secret = new TextEncoder().encode(requireEnv("supabaseJwtSecret"));
-  const { payload } = await jwtVerify(token, secret);
+  const { payload } = await jwtVerify(token, jwks);
 
   if (!payload.sub) {
     throw new Error("Supabase token is missing subject");
@@ -17,7 +19,7 @@ export async function verifySupabaseToken(token: string): Promise<SupabaseJwtPay
 
   return {
     sub: payload.sub,
-    email: typeof payload.email === "string" ? payload.email : undefined,
-    role: typeof payload.role === "string" ? payload.role : undefined
+    phone: typeof payload.phone === "string" ? payload.phone : undefined,
+    email: typeof payload.email === "string" ? payload.email : undefined
   };
 }
